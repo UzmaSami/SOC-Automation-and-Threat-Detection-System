@@ -32,6 +32,72 @@ MITRE Mapping:
 Tactic: Credential Access
 
 Technique: T1110 - Brute Force
+### Privilege Escalation Detection
+Event ID: 4728
+
+Detection: User Added to Domain Admins
+
+Response: Remove user from Admin groups
+
+MITRE Mapping:
+
+Tactic: Privilege Escalation
+
+Technique: T1078 - Valid Account
+### Suspicious PowerShell Activity
+Event ID: 4104
+
+Detection: Use of IEX, DownloadString, EncodedCommand
+
+Response: Log incident
+
+MITRE Mapping
+
+Tactic: Execution
+
+Technique: T1059.001 -PowerShell
+### Admin Login Monitoring
+Event ID: 4672
+
+Detection: Privileged account login
+
+MITRE Mapping
+
+Tactic: Privilege Escalation
+
+Technique: T1068 - Exploitation for Privilege Escalation
+## Automation Features
+Real-time event monitoring
+
+Automated account disabling
+
+Automatic removal from privileged groups
+
+Incident logging to file
+
+Export of logs to CSV format
+## Dashboard Features
+
+HTML-based SOC dashboard
+
+KPI metrics (attack counts)
+
+Visual charts using Chart.js
+
+Detailed event logs (tables)
+
+## Project Structure
+SOC-Automation-Projects/
+|
+|- scripts/
+|    |-SOC-monitor.ps1
+|    |-SOC-dashboard.ps1
+|-logs/
+|    |-bruteforce_logs.csv
+|    |-privilege_logs.
+|
+|
+      
 
 
 
