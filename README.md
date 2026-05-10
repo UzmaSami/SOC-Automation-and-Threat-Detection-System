@@ -1,4 +1,4 @@
-# Project-1-SOC-Automation-and-Threat-Detection-System
+# Project-0B-SOC-Automation-and-Threat-Detection-System
 ## Project Overview
 This project simulates a real-world Security Operations Center (SOC)
 by detecting and responding to common cyber threats using Windows Event Logs and PowerShell automation. It identifies brure force login attempts, privilege escalation activities, suspicious PowerShell execution, and privileged account logins.
