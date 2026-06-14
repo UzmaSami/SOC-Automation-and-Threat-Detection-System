@@ -72,58 +72,58 @@ the Active Directory Domain Controller
 
 ON-PREMISES
 ═══════════════════════════════════════════
-Windows Server 2022 DC (UzmaSamiDC01)
-│
-├── Windows Security Event Log
-│   ├── Event 4624 — Successful logon
-│   ├── Event 4625 — Failed logon
-│   ├── Event 4648 — Explicit credential use
-│   ├── Event 4672 — Special privilege logon
-│   ├── Event 4688 — Process creation
-│   ├── Event 4698 — Scheduled task created
-│   ├── Event 4720 — User account created
-│   ├── Event 4728 — Member added to group
-│   ├── Event 4732 — Member added to group
-│   └── Event 4104 — PowerShell script block
-│
-└── Azure Arc Agent (AMA)
-    └── Data Collection Rule
-        └── Streams events to ──────────────►
-                                             │
-AZURE                                        │
-═══════════════════════════════════════════  │
-Log Analytics Workspace ◄────────────────────┘
-│
-├── Raw event storage (90-day retention)
-├── KQL query engine
-└── Microsoft Sentinel
-    │
-    ├── DATA CONNECTORS
-    │   ├── Windows Security Events via AMA
-    │   ├── Microsoft Defender for Cloud
-    │   ├── Azure Activity
-    │   └── Azure AD Identity Protection
-    │
-    ├── ANALYTICS RULES (Custom)
-    │   ├── Brute Force — 5+ failures in 5min
-    │   ├── Privilege Escalation — Group 4728
-    │   ├── Suspicious PowerShell — Event 4104
-    │   ├── After Hours Admin Logon
-    │   └── New Local Admin Account Created
-    │
-    ├── INCIDENTS
-    │   ├── Real brute force detected ✅
-    │   ├── Real priv escalation detected ✅
-    │   └── Real PowerShell detected ✅
-    │
-    ├── AUTOMATION RULES
-    │   ├── Auto-assign to analyst
-    │   ├── Auto-tag by severity
-    │   └── Trigger playbooks
-    │
-    └── PLAYBOOKS (Logic Apps)
-        ├── Notify-On-Critical-Incident
-        └── Enrich-Incident-With-IP-Info
+- Windows Server 2022 DC (UzmaSamiDC01)
+- │
+- ├── Windows Security Event Log
+- │   ├── Event 4624 — Successful logon
+- │   ├── Event 4625 — Failed logon
+- │   ├── Event 4648 — Explicit credential use
+- │   ├── Event 4672 — Special privilege logon
+- │   ├── Event 4688 — Process creation
+- │   ├── Event 4698 — Scheduled task created
+- │   ├── Event 4720 — User account created
+- │   ├── Event 4728 — Member added to group
+- │   ├── Event 4732 — Member added to group
+- │   └── Event 4104 — PowerShell script block
+- │
+- └── Azure Arc Agent (AMA)
+  -  └── Data Collection Rule
+   -     └── Streams events to ──────────────►
+    -                                         │
+AZURE  -                                      │
+═══════════════════════════════════════════   │
+- Log Analytics Workspace ◄────────────────────┘
+- │
+- ├── Raw event storage (90-day retention)
+- ├── KQL query engine
+- └── Microsoft Sentinel
+-     │
+ -    ├── DATA CONNECTORS
+  -   │   ├── Windows Security Events via AMA
+  -   │   ├── Microsoft Defender for Cloud
+  -   │   ├── Azure Activity
+  -   │   └── Azure AD Identity Protection
+  -   │
+   -  ├── ANALYTICS RULES (Custom)
+   -  │   ├── Brute Force — 5+ failures in 5min
+  -   │   ├── Privilege Escalation — Group 4728
+   -  │   ├── Suspicious PowerShell — Event 4104
+   -  │   ├── After Hours Admin Logon
+    - │   └── New Local Admin Account Created
+   -  │
+   -  ├── INCIDENTS
+   -  │   ├── Real brute force detected ✅
+-     │   ├── Real priv escalation detected ✅
+   -  │   └── Real PowerShell detected ✅
+  -   │
+    - ├── AUTOMATION RULES
+    - │   ├── Auto-assign to analyst
+   -  │   ├── Auto-tag by severity
+   -  │   └── Trigger playbooks
+    - │
+    - └── PLAYBOOKS (Logic Apps)
+    -     ├── Notify-On-Critical-Incident
+     -    └── Enrich-Incident-With-IP-Info
 
 
 ---
