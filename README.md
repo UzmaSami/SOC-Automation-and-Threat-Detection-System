@@ -113,9 +113,9 @@ AZURE  -                                      │
    -  │
    -  ├── INCIDENTS
    -  │   ├── Real brute force detected ✅
--     │   ├── Real priv escalation detected ✅
+   -  │   ├── Real priv escalation detected ✅
    -  │   └── Real PowerShell detected ✅
-  -   │
+   -  │
     - ├── AUTOMATION RULES
     - │   ├── Auto-assign to analyst
    -  │   ├── Auto-tag by severity
