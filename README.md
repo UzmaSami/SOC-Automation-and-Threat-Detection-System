@@ -1,782 +1,896 @@
-# SOC-Automation-and-Threat-Detection-System
+# SOC Automation and Threat detection System
+## ADSAE Custom PAM Tool
+
 ## Overview
 
-This project documents the design and
-operation of a production Microsoft
-Sentinel Security Operations Centre
-connected to a live Windows Server 2022
-Domain Controller via Azure Arc — detecting,
-investigating, and responding to real
-security threats including brute force
+This project documents the design,
+development, and production deployment
+of ADSAE — the Active Directory Security
+Automation Engine — a custom PowerShell-
+based security automation platform that
+monitors Active Directory security events
+every five minutes and automatically
+remediates threats including brute force
 attacks, privilege escalation attempts,
 and suspicious PowerShell execution.
 
-This is not a simulated environment.
-The threats documented here were detected
-on a production Domain Controller running
-Active Directory. The alerts are real.
-The incidents are real. The automated
-responses are real.
+ADSAE runs in production on the Windows
+Server 2022 Domain Controller documented
+in Project 0. It has detected and
+responded to real security threats. It
+generates a live HTML security dashboard
+that reflects the current security state
+of the Active Directory environment. It
+produces structured evidence logs that
+feed the Sentinel SOC implemented in
+Project 5.
 
-Most security portfolios demonstrate
-Sentinel configuration. This project
-demonstrates Sentinel operation — the
-difference between setting up a tool
-and using it to detect and respond to
-actual adversarial behaviour.
+Commercial Privileged Access Management
+solutions — CyberArk, BeyondTrust,
+Delinea — solve this problem at
+enterprise scale at costs ranging from
+tens of thousands to hundreds of thousands
+of pounds per year. ADSAE solves it for
+a specific environment at zero licensing
+cost by replacing commercial tooling with
+custom automation precisely calibrated
+to the threats this environment faces.
 
 ---
 
 ## The Problem This Solves
 
-A Security Operations Centre exists to
-answer one question continuously: is
-something happening in our environment
-right now that requires a response?
+Active Directory is the most targeted
+asset in enterprise environments. The
+reason is straightforward — it holds
+the credentials and access rights for
+every user and every system in the
+domain. Compromising Active Directory
+is not partial compromise of the
+organisation. It is complete compromise.
 
-Answering that question requires three
-capabilities working together. First,
-visibility — the SOC must receive
-telemetry from every asset in the
-environment. Second, detection — the
-SOC must have the analytical capability
-to identify meaningful signals within
-that telemetry and distinguish genuine
-threats from background noise. Third,
-response — when a threat is detected
-the SOC must be able to act on it
-quickly enough to prevent or limit
-damage.
+The attack patterns targeting Active
+Directory follow predictable sequences.
+Brute force and password spray attacks
+attempt to obtain valid credentials.
+Once valid credentials are obtained the
+adversary escalates privileges — adding
+their account to Domain Admins or
+creating a new privileged account. With
+Domain Admin access the adversary can
+move freely through the environment,
+access any system, and maintain
+persistence through mechanisms that
+survive remediation attempts.
 
-Most organisations that adopt Microsoft
-Sentinel achieve the first capability
-— they connect data sources and data
-starts flowing. Many achieve partial
-detection capability — they enable
-built-in analytics rules and wait for
-alerts. Very few achieve the third
-capability — automated response that
-operates faster than any human analyst
-can.
+The window between initial credential
+compromise and privilege escalation
+is typically short. An adversary with
+valid credentials who can reach a
+Domain Controller can escalate privileges
+in minutes. The security response must
+therefore operate on the same timescale
+— minutes, not hours. Human-operated
+security processes that rely on an
+analyst reading an alert and taking
+action cannot reliably respond within
+this window. Automated response can.
 
-This project implements all three for
-a hybrid environment where the most
-valuable and most targeted asset —
-the Active Directory Domain Controller
-— is on-premises, not in the cloud.
+ADSAE closes this window by monitoring
+the specific event log entries that
+indicate these attack patterns and
+executing remediation within minutes
+of detection — faster than any human-
+operated process and without requiring
+analyst availability at any hour.
 
 ---
 
 ## Architecture
 
 
-ON-PREMISES
-═══════════════════════════════════════════
-- Windows Server 2022 DC (UzmaSamiDC01)
+PRODUCTION ENVIRONMENT
+════════════════════════════════════════════
+
+Windows Server 2022 DC (UzmaSamiDC01)
 - │
-- ├── Windows Security Event Log
-- │   ├── Event 4624 — Successful logon
-- │   ├── Event 4625 — Failed logon
-- │   ├── Event 4648 — Explicit credential use
-- │   ├── Event 4672 — Special privilege logon
-- │   ├── Event 4688 — Process creation
-- │   ├── Event 4698 — Scheduled task created
-- │   ├── Event 4720 — User account created
-- │   ├── Event 4728 — Member added to group
-- │   ├── Event 4732 — Member added to group
-- │   └── Event 4104 — PowerShell script block
+- ├── ADSAE CORE ENGINE
+- │   └── ADSAE-Monitor.ps1
+- │       Running as SYSTEM via Task Scheduler
+- │       Execution interval: every 5 minutes
+- │       Trigger: time-based + event-based
 - │
-- └── Azure Arc Agent (AMA)
-  -  └── Data Collection Rule
-   -     └── Streams events to ──────────────►
-    -                                         │
-AZURE  -                                      │
-═══════════════════════════════════════════   │
-- Log Analytics Workspace ◄────────────────────┘
+- ├── DETECTION MODULES
+- │   │
+- │   ├── Module 1: Brute Force Detection
+- │   │   Monitors: Event ID 4625
+- │   │   Threshold: 5+ failures in 5 minutes
+- │   │   Scope: per source IP + per target account
+- │   │   Response: account disable + alert
+- │   │
+- │   ├── Module 2: Privilege Escalation Detection
+- │   │   Monitors: Event ID 4728, 4732, 4756
+- │   │   Scope: all privileged groups
+- │   │   Protected groups:
+- │   │     Domain Admins
+- │   │     Enterprise Admins
+- │   │     Schema Admins
+- │   │     Administrators
+- │   │     Group Policy Creator Owners
+- │   │   Response: remove from group + alert
+- │   │   Whitelist: approved admin accounts
+- │   │
+- │   └── Module 3: Suspicious PowerShell
+- │       Monitors: Event ID 4104
+- │       Detection: keyword pattern matching
+- │       Keywords: encoded commands,
+- │                 web downloads,
+- │                 execution bypasses
+- │       Response: evidence capture + alert
 - │
-- ├── Raw event storage (90-day retention)
-- ├── KQL query engine
-- └── Microsoft Sentinel
--     │
- -    ├── DATA CONNECTORS
-  -   │   ├── Windows Security Events via AMA
-  -   │   ├── Microsoft Defender for Cloud
-  -   │   ├── Azure Activity
-  -   │   └── Azure AD Identity Protection
-  -   │
-   -  ├── ANALYTICS RULES (Custom)
-   -  │   ├── Brute Force — 5+ failures in 5min
-  -   │   ├── Privilege Escalation — Group 4728
-   -  │   ├── Suspicious PowerShell — Event 4104
-   -  │   ├── After Hours Admin Logon
-    - │   └── New Local Admin Account Created
-   -  │
-   -  ├── INCIDENTS
-   -  │   ├── Real brute force detected ✅
-   -  │   ├── Real priv escalation detected ✅
-   -  │   └── Real PowerShell detected ✅
-   -  │
-    - ├── AUTOMATION RULES
-    - │   ├── Auto-assign to analyst
-   -  │   ├── Auto-tag by severity
-   -  │   └── Trigger playbooks
-    - │
-    - └── PLAYBOOKS (Logic Apps)
-    -     ├── Notify-On-Critical-Incident
-     -    └── Enrich-Incident-With-IP-Info
+- ├── RESPONSE ENGINE
+- │   ├── Account disable (immediate)
+- │   ├── Group membership removal (immediate)
+- │   ├── Evidence capture (forensic preservation)
+- │   ├── Alert generation (notification)
+- │   └── Incident log creation (audit trail)
+- │
+- ├── EVIDENCE STORE
+- │   └── C:\UzmaSOC-Logs\
+- │       ├── incidents\
+- │       │   └── [timestamped incident files]
+- │       ├── evidence\
+- │       │   └── [PowerShell script captures]
+- │       └── adsae-audit.log
+- │
+- ├── DASHBOARD GENERATOR
+- │   └── Live HTML dashboard
+- │       Auto-refreshes every 5 minutes
+- │       Shows: active threats, recent
+- │       incidents, system status,
+- │       detection statistics
+- │
+- └── AZURE SENTINEL INTEGRATION
+    └── Events forwarded via
+        Log Analytics Agent
+        → Sentinel analytics rules
+          reference ADSAE incident data
 
 
 ---
 
-## Why On-Premises DC as the Primary
-## Data Source
+## Why Build This Rather Than Buy
 
-The Domain Controller is the most
-attacked asset in any Active Directory
-environment. It holds the credentials
-for every user in the organisation. It
-controls authentication for every
-resource on the domain. It stores
-the Group Policy that governs the
-security configuration of every domain-
-joined machine. Compromise of the
-Domain Controller is effectively
-compromise of the entire organisation.
+The build versus buy question for
+security tooling is genuinely complex
+and the answer is not always build.
+Commercial PAM solutions provide
+capabilities that would take years
+to replicate in custom tooling —
+session recording, credential vaulting,
+just-in-time access provisioning,
+integration with enterprise ticketing
+systems. For organisations at scale
+with budget for commercial licensing
+the buy answer is often correct.
 
-It is also the asset most frequently
-excluded from cloud SIEM deployments.
-Cloud-native SIEMs connect easily to
-cloud services — Entra ID sign-in logs,
-Azure Activity logs, Defender for Cloud
-alerts all have native Sentinel
-connectors that require minimal
-configuration. On-premises Domain
-Controllers require Arc connectivity,
-Data Collection Rules, and careful
-event filtering to collect the right
-events without generating overwhelming
-log volume.
+For this environment the build answer
+was correct for three reasons.
 
-This gap between what is easy to
-connect and what is most important to
-monitor is where real-world breaches
-hide. An adversary who understands
-Azure-focused SOC deployments will
-target the on-premises environment
-precisely because they know it is
-less likely to be monitored with the
-same rigour as cloud workloads.
+The first reason is precision. Commercial
+PAM tools are designed to solve the
+general PAM problem across a wide range
+of environments and use cases. They
+carry the complexity and configuration
+overhead of that generality. ADSAE is
+designed to solve the specific threat
+patterns this specific environment faces.
+Every detection threshold, every response
+action, every whitelist entry is calibrated
+to this environment. The result is a
+tool with less noise and more relevant
+signal than a general-purpose solution
+would produce for the same scope.
 
-Connecting the Domain Controller as
-the primary Sentinel data source closes
-this gap deliberately.
+The second reason is visibility. Using
+commercial tooling produces a black box —
+the tool detects threats and takes
+actions through mechanisms the operator
+cannot fully inspect. ADSAE is entirely
+transparent — every detection decision,
+every response action, every piece of
+evidence collected is implemented in
+readable PowerShell that can be
+inspected, modified, and extended.
+Understanding precisely what the tool
+does and why is a security property
+in itself.
 
----
-
-## Data Collection — Choosing the
-## Right Events
-
-Windows Security Event Log generates
-thousands of events per day on an
-active Domain Controller. Collecting
-all of them creates log volume that
-is expensive to store and impossible
-to query efficiently. The discipline
-of selecting the right events to
-collect is as important as the
-collection itself.
-
-I implemented a Data Collection Rule
-targeting the specific event IDs that
-provide meaningful security signal
-without collecting noise.
-
-Authentication events — 4624, 4625,
-4648, and 4768 — provide visibility
-into who is authenticating, from where,
-with what credentials, and whether they
-are succeeding or failing. Failed
-authentication events are the primary
-signal for credential attack detection.
-
-Privilege events — 4672, 4728, 4732,
-4756, and 4769 — provide visibility
-into sensitive group membership changes
-and special privilege assignments.
-An account being added to Domain Admins
-is a high-value signal that should
-generate an immediate alert regardless
-of context. It may be legitimate. It
-may be an attacker who has achieved
-initial access and is escalating
-privileges. Either way it requires
-immediate investigation.
-
-Process events — 4688 with command
-line logging enabled — provide
-visibility into what processes are
-executing on the Domain Controller.
-Legitimate administration generates
-a predictable pattern of process
-executions. Attackers use tools —
-mimikatz, bloodhound, cobalt strike
-— that generate process executions
-that deviate from that pattern.
-
-PowerShell script block logging —
-event 4104 — captures the actual
-content of PowerShell scripts as
-they execute, after any obfuscation
-has been decoded by the PowerShell
-engine. An adversary who base64
-encodes a malicious PowerShell command
-to evade signature detection will
-find that script block logging captures
-the decoded command regardless of
-the encoding technique used.
+The third reason is learning. Building
+ADSAE required developing a detailed
+understanding of Windows Security Event
+Log structure, Active Directory API
+operations, PowerShell automation
+patterns, forensic evidence preservation,
+and the specific techniques used in
+Active Directory attacks. That
+understanding cannot be acquired by
+configuring a commercial tool. It can
+only be acquired by building the
+detection and response logic from first
+principles.
 
 ---
 
-## Analytics Rules — Detection Logic
-
-The built-in Sentinel analytics rules
-provide broad coverage across common
-attack patterns. They are a starting
-point not an endpoint. The rules that
-produce the most value for a specific
-environment are those written for
-that environment — rules that reflect
-its specific users, systems, and
-normal behaviour patterns.
-
-I implemented five custom analytics
-rules targeting the attack patterns
-most relevant to an Active Directory
-environment.
+## Detection Logic
 
 ### Brute Force Detection
 
-kql
-SecurityEvent
-| where EventID == 4625
-| where TimeGenerated > ago(5m)
-| summarize
-    FailureCount = count(),
-    TargetAccounts = make_set(TargetUserName),
-    SourceIPs = make_set(IpAddress)
-    by Computer, bin(TimeGenerated, 5m)
-| where FailureCount >= 5
-| extend
-    AlertSeverity = iff(FailureCount >= 20,
-        "High", "Medium"),
-    Description = strcat(
-        FailureCount,
-        " failed logon attempts detected in 5 minutes"
+Brute force and password spray attacks
+leave a characteristic signature in
+the Windows Security Event Log. Event
+ID 4625 — an account failed to log on
+— is generated every time an
+authentication attempt fails. A single
+failed logon for a legitimate user
+forgetting their password generates
+one or two events. A credential
+stuffing attack against a user
+generates dozens. A password spray
+against an entire user population
+generates hundreds across many accounts
+from a single source IP.
+
+The ADSAE brute force module monitors
+Event ID 4625 using a rolling five-
+minute window. It aggregates failures
+by source IP address and by target
+account separately — because spray
+attacks distribute failures across
+accounts while stuffing attacks
+concentrate them on a single account.
+
+powershell
+function Invoke-BruteForceDetection {
+    param(
+        [int]$ThresholdMinutes = 5,
+        [int]$ThresholdCount = 5
     )
 
+    $startTime = (Get-Date).AddMinutes(
+        -$ThresholdMinutes
+    )
 
-This rule detects credential stuffing
-and password spray attacks by
-identifying computers generating
-five or more failed authentication
-events within a five-minute window.
-The threshold was calibrated against
-the normal failure rate of the
-environment — a threshold too low
-generates false positives from
-legitimate locked-out users. Too
-high misses slow-and-low spray attacks.
+    # Query Security Event Log
+    $failedLogons = Get-WinEvent -FilterHashtable @{
+        LogName   = 'Security'
+        Id        = 4625
+        StartTime = $startTime
+    } -ErrorAction SilentlyContinue
+
+    if (!$failedLogons) { return }
+
+    # Aggregate by source IP
+    $bySourceIP = $failedLogons |
+        ForEach-Object {
+            $xml = \[xml\]$_.ToXml()
+            [PSCustomObject]@{
+                SourceIP    = $xml.Event.EventData.Data |
+                    Where-Object {$_.Name -eq 'IpAddress'} |
+                    Select-Object -ExpandProperty '#text'
+                TargetUser  = $xml.Event.EventData.Data |
+                    Where-Object {$_.Name -eq 'TargetUserName'} |
+                    Select-Object -ExpandProperty '#text'
+                TimeCreated = $_.TimeCreated
+            }
+        } |
+        Group-Object SourceIP |
+        Where-Object {$_.Count -ge $ThresholdCount}
+
+    foreach ($group in $bySourceIP) {
+        $affectedAccounts = $group.Group.TargetUser |
+            Sort-Object -Unique
+
+        # Execute response
+        Invoke-BruteForceResponse `
+            -SourceIP $group.Name `
+            -AffectedAccounts $affectedAccounts `
+            -FailureCount $group.Count
+    }
+}
+
+
+When the threshold is crossed the
+response module executes immediately.
+Affected accounts that are not in the
+protected whitelist are disabled in
+Active Directory. An incident record
+is created with the source IP, the
+affected accounts, the failure count,
+and the timestamp. The event is
+forwarded to Sentinel.
+
+The whitelist is critical. Disabling
+accounts automatically without a
+whitelist would disable service
+accounts, administrative accounts,
+and any other account that a
+misconfigured application might
+repeatedly fail to authenticate with.
+The whitelist contains accounts that
+should never be automatically disabled
+regardless of the failure pattern —
+specifically the service account used
+by Azure AD Connect, the ADSAE service
+account itself, and designated break-
+glass accounts.
 
 ### Privilege Escalation Detection
 
-kql
-SecurityEvent
-| where EventID == 4728
-| where TimeGenerated > ago(1h)
-| where TargetUserName in (
-    "Domain Admins",
-    "Enterprise Admins",
-    "Schema Admins",
-    "Administrators",
-    "Group Policy Creator Owners"
-)
-| project
-    TimeGenerated,
-    SubjectUserName,
-    MemberName,
-    TargetUserName,
-    Computer
-| extend
-    AlertSeverity = "High",
-    Description = strcat(
-        MemberName,
-        " was added to ",
-        TargetUserName,
-        " by ",
-        SubjectUserName
+Privileged group membership changes
+are captured in Event ID 4728 — a
+member was added to a security-enabled
+global group. This event is generated
+by Active Directory whenever any
+account is added to any security group.
+The ADSAE privilege escalation module
+filters specifically for additions to
+groups whose membership confers
+dangerous capabilities.
+
+powershell
+function Invoke-PrivilegeEscalationDetection {
+
+    $privilegedGroups = @(
+        'Domain Admins',
+        'Enterprise Admins',
+        'Schema Admins',
+        'Administrators',
+        'Group Policy Creator Owners',
+        'Account Operators',
+        'Backup Operators'
     )
 
+    # Protected accounts never removed
+    $approvedAdmins = @(
+        'Administrator',
+        'uzma.admin',
+        'svc-adsae'
+    )
 
-Any addition to a privileged group
-generates a High severity alert
-immediately. There is no threshold
-here — a single event is sufficient
-because legitimate privileged group
-membership changes should be
-infrequent, planned, and approved.
-An alert for every change enforces
-the expectation that every change
-will be reviewed.
+    $startTime = (Get-Date).AddMinutes(-5)
+
+    $groupChanges = Get-WinEvent -FilterHashtable @{
+        LogName   = 'Security'
+        Id        = 4728
+        StartTime = $startTime
+    } -ErrorAction SilentlyContinue
+
+    foreach ($event in $groupChanges) {
+        $xml = \[xml\]$event.ToXml()
+
+        $memberAdded = $xml.Event.EventData.Data |
+            Where-Object {$_.Name -eq 'MemberName'} |
+            Select-Object -ExpandProperty '#text'
+
+        $targetGroup = $xml.Event.EventData.Data |
+            Where-Object {$_.Name -eq 'TargetUserName'} |
+            Select-Object -ExpandProperty '#text'
+
+        $subjectUser = $xml.Event.EventData.Data |
+            Where-Object {$_.Name -eq 'SubjectUserName'} |
+            Select-Object -ExpandProperty '#text'
+
+        # Only respond to privileged group changes
+        if ($targetGroup -notin $privilegedGroups) {
+            continue
+        }
+
+        # Extract account name from DN
+        $accountName = ($memberAdded -split ',')[0] `
+            -replace 'CN=', ''
+
+        # Check against whitelist
+        if ($accountName -in $approvedAdmins) {
+            Write-AdsaeLog -Level INFO `
+                -Message "Approved admin $accountName added to $targetGroup by $subjectUser — no action"
+            continue
+        }
+
+        # Unauthorised escalation — respond
+        Invoke-PrivEscResponse `
+            -AccountName $accountName `
+            -TargetGroup $targetGroup `
+            -SubjectUser $subjectUser `
+            -EventTime $event.TimeCreated
+    }
+}
+
+
+The response removes the account from
+the privileged group immediately. An
+incident record is created capturing
+the account that was added, the group
+it was added to, the account that
+performed the addition, and the time.
+This incident record is the forensic
+evidence that allows the investigation
+to determine whether this was a
+legitimate but unapproved change or
+an adversarial privilege escalation.
+
+The distinction between the account
+that was added and the account that
+performed the addition is significant.
+In an adversarial scenario the subject
+— the account that performed the
+addition — may itself be compromised.
+Investigating both the added account
+and the subject account is standard
+practice for privilege escalation
+incidents.
 
 ### Suspicious PowerShell Detection
 
-kql
-Event
-| where EventID == 4104
-| where Source == "Microsoft-Windows-PowerShell"
-| where RenderedDescription has_any (
-    "Invoke-Expression",
-    "IEX",
-    "DownloadString",
-    "WebClient",
-    "EncodedCommand",
-    "FromBase64String",
-    "Bypass",
-    "Hidden",
-    "-nop",
-    "Net.WebClient"
-)
-| project
-    TimeGenerated,
-    Computer,
-    RenderedDescription
-| extend
-    AlertSeverity = "Medium",
-    Description = "Suspicious PowerShell
-    execution technique detected"
+PowerShell is the most powerful
+administrative tool available on
+Windows and consequently one of the
+most abused. Its ability to download
+content from the internet, execute
+code from memory without writing to
+disk, and bypass script execution
+policies makes it the tool of choice
+for a large proportion of post-
+exploitation activity.
+
+Event ID 4104 — PowerShell script
+block logging — captures the content
+of PowerShell scripts as they execute
+after any obfuscation has been decoded
+by the PowerShell engine. This is
+the key capability. An adversary who
+base64 encodes a malicious command to
+evade detection will find that script
+block logging captures the decoded
+version. The evasion technique that
+works against command-line logging
+does not work against script block
+logging.
+
+powershell
+function Invoke-SuspiciousPowerShellDetection {
+
+    $suspiciousPatterns = @(
+        'Invoke-Expression',
+        'IEX\(',
+        'IEX \(',
+        'DownloadString',
+        'DownloadFile',
+        'WebClient',
+        'Net\.WebClient',
+        'EncodedCommand',
+        'enc ',
+        'FromBase64String',
+        '-ExecutionPolicy Bypass',
+        '-ep bypass',
+        'Hidden',
+        'WindowStyle Hidden',
+        'Start-Process.*-WindowStyle',
+        'Invoke-Shellcode',
+        'Invoke-Mimikatz',
+        'Invoke-BloodHound',
+        'PowerSploit',
+        'Empire'
+    )
+
+    $startTime = (Get-Date).AddMinutes(-5)
+
+    $psEvents = Get-WinEvent -FilterHashtable @{
+        LogName      = 'Microsoft-Windows-PowerShell/Operational'
+        Id           = 4104
+        StartTime    = $startTime
+    } -ErrorAction SilentlyContinue
+
+    foreach ($event in $psEvents) {
+        $scriptContent = $event.Message
+
+        $detectedPatterns = $suspiciousPatterns |
+            Where-Object {
+                $scriptContent -match \[regex\]::Escape($_)
+            }
+
+        if ($detectedPatterns.Count -eq 0) {
+            continue
+        }
+
+        # Capture evidence
+        $evidencePath = "C:\UzmaSOC-Logs\evidence\" +
+            "ps-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+
+        @"
+ADSAE POWERSHELL EVIDENCE CAPTURE
+Time: $(Get-Date)
+Patterns Detected: $($detectedPatterns -join ', ')
+Script Content:
+$scriptContent
+"@ | Out-File $evidencePath -Encoding UTF8
+
+        # Create incident
+        New-AdsaeIncident `
+            -Type 'SuspiciousPowerShell' `
+            -Severity 'Medium' `
+            -Details @{
+                PatternsDetected = $detectedPatterns
+                EvidencePath     = $evidencePath
+                EventTime        = $event.TimeCreated
+            }
+    }
+}
 
 
-This rule detects PowerShell
-techniques commonly used in attacks —
-encoded commands designed to evade
-logging, web downloads that retrieve
-payloads from external servers,
-and execution policy bypass attempts.
-Legitimate administrative scripts
-rarely use these techniques. When
-they do appear in a security-conscious
-environment they warrant investigation
-regardless of whether they prove
-to be malicious.
+The PowerShell response is evidence
+capture rather than automatic account
+action. This is an intentional design
+decision. PowerShell that matches
+suspicious patterns is not necessarily
+malicious — legitimate administrative
+tools use encoded commands and web
+downloads. Automatically disabling
+the account of an administrator who
+ran a legitimate script would cause
+operational disruption without
+security benefit.
 
----
-
-## Real Threats Detected
-
-This is where this project differs
-from every tutorial and every lab
-exercise. The analytics rules above
-were not written to detect simulated
-data. They detected real events on
-a production Domain Controller.
-
-### Incident 1 — Brute Force Attack
-
-The brute force analytics rule
-triggered against a pattern of
-failed authentication events
-targeting multiple user accounts
-from a single source in a short
-time window. The event data showed
-a classic password spray pattern —
-one or two attempts per account
-across many accounts, staying below
-per-account lockout thresholds while
-testing a common password across
-the user population.
-
-Investigation confirmed the attempts
-were not from any authorised source.
-The ADSAE automation engine — built
-in Project 9 — detected the same
-pattern independently through its
-own monitoring of Event 4625 and
-disabled the targeted accounts
-automatically before any successful
-authentication occurred.
-
-This incident validated the layered
-detection approach — Sentinel
-provided visibility and an incident
-record for investigation while ADSAE
-provided the automated response.
-Neither system alone provides what
-both together achieve.
-
-### Incident 2 — Privilege Escalation
-
-The privilege escalation analytics
-rule triggered on an Event 4728
-showing an account being added to
-the Domain Admins group. The
-SubjectUserName — the account that
-performed the addition — was not
-an account with a legitimate
-administrative function.
-
-Investigation revealed the account
-had been used in the brute force
-attempt from Incident 1 and had
-successfully authenticated during
-a window before the brute force
-rule triggered. The attacker had
-obtained access and immediately
-attempted privilege escalation.
-
-The ADSAE engine removed the account
-from Domain Admins automatically
-on detecting Event 4728. The Sentinel
-incident provided the timeline and
-the full context of how the initial
-access was obtained — information
-that would not have been available
-if only the escalation had been
-detected without the preceding
-authentication events.
-
-### Incident 3 — Suspicious PowerShell
-
-The PowerShell analytics rule
-triggered on Event 4104 showing
-execution of a script containing
-an encoded command and a web
-download attempt. The script
-attempted to download content
-from an external URL using
-System.Net.WebClient.
-
-The ADSAE engine captured the
-full script content as evidence.
-The external URL was submitted
-to threat intelligence and
-confirmed as associated with
-a known malware distribution
-infrastructure.
-
-This incident demonstrated the
-value of PowerShell script block
-logging specifically — the command
-was base64 encoded and would not
-have been detected by signature-
-based tools inspecting the raw
-command line. Script block logging
-captures the decoded execution
-content regardless of encoding.
+The correct response to suspicious
+PowerShell is preservation of evidence
+and notification for human review.
+The analyst who receives the alert
+has the full script content available
+immediately — not a vague alert
+requiring them to search through event
+logs to find the relevant entry. The
+decision to act further — disable
+the account, isolate the machine,
+escalate the incident — is made by
+the analyst with full context rather
+than by the automation without it.
 
 ---
 
-## Incident Response Workflow
+## Real Threats Detected in Production
 
-Each detected incident followed
-a documented response workflow
-that provides consistency and
-ensures no investigation steps
-are skipped regardless of the
-time of day the incident is
-detected.
+ADSAE is not a theoretical tool.
+It has detected and responded to
+real security events on the production
+Domain Controller.
 
+### Brute Force Incident
 
-DETECTION
-- │
-- ├── Analytics rule fires
-- ├── Incident created in Sentinel
-- ├── Automation rule assigns incident
-- └── Notification sent via playbook
-  -       │
-   -      ▼
-- TRIAGE (within 15 minutes)
-- │
-- ├── Severity assessment
-- ├── Affected assets identified
-- ├── Initial scope determination
-- └── Escalation decision
-  -       │
-   -      ▼
-INVESTIGATION
-- │
-- ├── Timeline reconstruction via KQL
-- ├── Related events correlated
-- ├── Threat intelligence lookup
-- └── Root cause identified
--         │
- -        ▼
-CONTAINMENT
-- │
-- ├── ADSAE automated response (immediate)
-- ├── Account disable if compromised
-- ├── Network isolation if required
-- └── Evidence preservation
-  -       │
-   -      ▼
-ERADICATION AND RECOVERY
-- │
-- ├── Malicious changes reversed
-- ├── Affected accounts remediated
-- ├── Access reviewed and tightened
-- └── Vulnerability addressed
-  -       │
-   -      ▼
-POST-INCIDENT
-- │
-- ├── Incident documented in Sentinel
-- ├── Analytics rule tuned if needed
-- ├── ADSAE playbook updated if needed
-- └── Lessons incorporated
+A pattern of failed authentication
+events triggered the brute force
+module. Analysis of the incident
+record showed a password spray
+pattern — low failure count per
+account, high failure count from a
+single source IP, targeting many
+accounts with common passwords.
 
+ADSAE disabled the targeted accounts
+within the five-minute detection
+window. The Sentinel incident created
+from the ADSAE log data provided
+the full timeline and source
+attribution for the post-incident
+review. The accounts were re-enabled
+after the source IP was blocked at
+the network layer and password resets
+were enforced.
 
----
+### Privilege Escalation Incident
 
-## KQL Threat Hunting
+The privilege escalation module
+triggered on an Event ID 4728 showing
+an account being added to Domain
+Admins by a subject account that was
+not an approved administrator.
 
-Beyond reactive detection through
-analytics rules I implemented proactive
-threat hunting queries that run against
-historical data to identify patterns
-that may indicate compromise that has
-not yet triggered an alert.
+ADSAE removed the account from Domain
+Admins within the five-minute detection
+window. The incident record identified
+both the added account and the subject
+account — leading the investigation
+to discover that the subject account
+had been compromised during the
+brute force attack that preceded
+this incident. The attacker had
+obtained credentials, used them to
+add an account to Domain Admins, and
+been automatically reversed before
+they could use the elevated access.
 
-### Hunt for Lateral Movement
+### Suspicious PowerShell Incident
 
-kql
-SecurityEvent
-| where EventID == 4624
-| where LogonType == 3
-| where TimeGenerated > ago(7d)
-| summarize
-    UniqueSourceIPs = dcount(IpAddress),
-    LogonCount = count(),
-    TargetAccounts = make_set(TargetUserName)
-    by SubjectUserName
-| where UniqueSourceIPs > 3
-| where LogonCount > 20
-| order by UniqueSourceIPs desc
+The PowerShell detection module
+triggered on a script that contained
+an encoded command and a web download
+attempt. The evidence file captured
+the full decoded script content —
+a download cradle attempting to
+retrieve a payload from an external
+URL.
 
-
-This query identifies accounts
-authenticating from an unusual number
-of source IPs in a seven-day window
-— a pattern consistent with credential
-use across multiple systems that may
-indicate lateral movement.
-
-### Hunt for Persistence Mechanisms
-
-kql
-SecurityEvent
-| where EventID == 4698
-| where TimeGenerated > ago(24h)
-| project
-    TimeGenerated,
-    SubjectUserName,
-    TaskName,
-    TaskContent,
-    Computer
-| where SubjectUserName !endswith "$"
-| order by TimeGenerated desc
-
-
-Scheduled task creation is a common
-persistence mechanism. This query
-identifies scheduled tasks created
-by non-machine accounts in the last
-24 hours — a pattern that warrants
-review to confirm legitimacy.
+The evidence was submitted to threat
+intelligence which confirmed the URL
+as associated with known malware
+infrastructure. The session was
+terminated. The user account was
+reviewed and found to have been
+compromised through a phishing email
+received earlier the same day.
 
 ---
 
-## Playbook — Automated Enrichment
+## Live Dashboard
 
-The incident enrichment playbook
-runs automatically when a High
-severity incident is created. It
-extracts IP addresses from the
-incident and queries a threat
-intelligence API for context —
-country of origin, known malicious
-activity, ASN information — and
-adds this information to the
-incident as a comment.
+ADSAE generates a live HTML security
+dashboard that provides real-time
+visibility into the security state
+of the Active Directory environment.
 
-This enrichment happens in seconds,
-providing the analyst who opens
-the incident with context that
-would otherwise require manual
-lookup against multiple sources.
-The analyst begins investigation
-with information rather than
-beginning investigation by gathering
-information.
+The dashboard refreshes automatically
+every five minutes, aligned with the
+ADSAE detection cycle. It displays
+the current system status — whether
+ADSAE is running, when it last
+executed, and whether the last
+execution produced any incidents.
+
+The recent incidents panel shows
+the last ten incidents with type,
+severity, timestamp, and status.
+Incidents are colour-coded by
+severity — Critical in red, High
+in orange, Medium in yellow —
+allowing the analyst to identify
+the priority items immediately.
+
+The detection statistics panel shows
+the cumulative counts of each
+detection type — brute force
+detections, privilege escalation
+detections, PowerShell detections
+— since ADSAE was deployed. This
+trend data is more meaningful than
+individual incident counts because
+it shows whether the environment
+is experiencing increasing or
+decreasing threat activity over time.
+
+The protected accounts panel shows
+which accounts are in the disable
+whitelist and which privileged group
+members are in the approved admin
+whitelist. This makes the whitelist
+configuration visible in the
+operational interface rather than
+hidden in a configuration file.
+
+---
+
+## Integration with Sentinel
+
+ADSAE and Sentinel are complementary
+rather than redundant. They solve
+different parts of the detection
+and response problem.
+
+Sentinel provides broad visibility
+across all data sources — cloud
+events, identity events, network
+events, and on-premises events
+through the Log Analytics agent.
+Its analytics rules detect patterns
+across the entire environment that
+no single source could reveal. A
+correlation between a suspicious
+sign-in from Entra ID logs and an
+anomalous process execution from
+Security Event logs is something
+Sentinel detects and ADSAE cannot.
+
+ADSAE provides fast response to
+the specific on-premises Active
+Directory threats it is designed
+to detect. Its five-minute execution
+cycle means response to brute force
+and privilege escalation happens
+faster than any Sentinel analytics
+rule to playbook to API call chain
+could achieve.
+
+The integration between them is
+through the evidence logs that ADSAE
+writes to C:\UzmaSOC-Logs\. These
+logs are collected by the Log
+Analytics agent installed through
+Azure Arc and made available in
+Sentinel. Analytics rules in Sentinel
+can reference ADSAE incident data —
+correlating an ADSAE brute force
+detection with Entra ID sign-in
+risk signals to produce a richer
+incident record than either system
+could produce alone.
 
 ---
 
 ## Challenges Encountered
 
-**Data Collection Rule configuration
-for Arc-connected servers**
+*Task Scheduler reliability*
 
-The legacy method of connecting on-
-premises servers to Sentinel used
-the Microsoft Monitoring Agent with
-workspace-level configuration. The
-current method uses the Azure
-Monitoring Agent with Data Collection
-Rules. The two methods collect events
-differently and cannot run
-simultaneously on the same server.
+The ADSAE engine runs via Task
+Scheduler. Early in the deployment
+the task occasionally failed to
+execute due to the service account
+not having the required permissions
+to query the Security Event Log.
+Security Event Log access requires
+the account to be a member of the
+Event Log Readers group or to have
+explicit read permissions on the
+log file. Adding the service account
+to Event Log Readers resolved the
+execution failures.
 
-The decision to use AMA with Data
-Collection Rules was deliberate —
-it aligns with Microsoft's current
-architecture and avoids a future
-migration. The challenge was that
-some Sentinel data connector
-documentation still references the
-MMA method. Navigating between
-current and legacy documentation
-to implement the correct architecture
-required careful attention to
-publication dates and version
-references.
+This is a common oversight when
+deploying scheduled tasks that query
+security-relevant event logs — the
+Security log is not readable by
+standard users and the permission
+requirement is not surfaced clearly
+in the error messages when permission
+is denied.
 
-*Analytics rule tuning*
+*Whitelist management*
 
-The initial brute force threshold
-of five failures in five minutes
-generated significant false positive
-volume from a service account that
-was misconfigured and repeatedly
-attempting to authenticate with
-an expired password. Rather than
-raising the threshold — which would
-have reduced detection sensitivity
-— I added an exclusion for the
-specific service account and created
-a separate lower-priority alert
-for that account's authentication
-failures to ensure the underlying
-misconfiguration was addressed.
+The initial deployment without a
+complete whitelist resulted in the
+Azure AD Connect service account
+being disabled by the brute force
+module when it generated repeated
+authentication failures due to an
+expired password. The effect was
+immediate — directory synchronisation
+stopped and cloud-only changes ceased
+to propagate to the on-premises
+directory.
 
-This is the reality of production
-SOC operation. Tuning is continuous.
-Rules that generate noise are not
-disabled — they are refined. The
-goal is high-fidelity alerting, not
-silence.
+Recovery required re-enabling the
+service account, updating its
+password in Azure AD Connect, and
+restarting the synchronisation
+service. More importantly it required
+updating the whitelist immediately
+to prevent recurrence and prompted
+a complete audit of all service
+accounts that could generate
+authentication patterns matching
+the brute force threshold.
 
-*Incident volume management*
+*Evidence log size management*
 
-Three active analytics rules on a
-production Domain Controller generate
-meaningful incident volume. Managing
-this volume without allowing genuine
-threats to be lost in noise required
-implementing incident grouping —
-configuring rules to group related
-events into a single incident rather
-than creating a separate incident
-for every event that matches the
-rule criteria. A brute force attack
-generating fifty failed logon events
-creates one incident, not fifty.
+PowerShell script block events can
+be large. The evidence capture for
+suspicious PowerShell events can
+produce multi-kilobyte files for
+each detected event. Without log
+management the evidence directory
+grows without bound. A cleanup
+routine was implemented that deletes
+evidence files older than 90 days —
+aligned with the Log Analytics
+retention period so that evidence
+is preserved for the investigation
+window and then removed to prevent
+indefinite growth.
 
 ---
 
 ## Lessons Learned
 
-The most important lesson from
-operating this SOC was that detection
-without response is notification
-without action. An analytics rule
-that fires and creates an incident
-has provided awareness. Awareness
-without response is insufficient —
-an adversary continues operating
-while the incident sits in the queue
-waiting for an analyst.
+The most significant lesson from
+building and operating ADSAE was
+about the relationship between
+automation and investigation.
 
-The integration between Sentinel
-detection and ADSAE automated
-response — described in Project 9
-— is the answer to this problem
-in this environment. For larger
-environments the answer is a full
-SOAR implementation using Sentinel
-playbooks to execute response actions
-automatically. The principle is the
-same regardless of scale: detection
-and response must be coupled, not
-sequential.
+Automated response is valuable
+precisely because it operates faster
+than human analysts. It is also
+dangerous precisely because it
+operates without human judgment.
+The design decisions about which
+responses are automated and which
+require human review are the most
+important design decisions in any
+automated response system.
 
-The second lesson was about the
-value of real data. Every tutorial
-on Sentinel analytics rules uses
-sample data or generated test events.
-Operating against real Domain
-Controller events surfaces issues
-that sample data never reveals —
-legitimate processes that match
-detection signatures, service accounts
-with authentication patterns that
-look malicious, scheduled tasks
-created by monitoring tools that
-appear in persistence hunting queries.
-Tuning a rule against real data is
-a fundamentally different and more
-valuable experience than writing
-a rule against synthetic data.
+Account disable for brute force
+victims is automated because the
+risk of not acting — account
+compromise — is immediate and
+severe. Account disable for
+suspicious PowerShell execution
+is not automated because the risk
+of false positive action — disabling
+an administrator running a legitimate
+script — is operationally significant
+and the automated system cannot
+distinguish the two cases reliably.
+
+This calibration — what to automate
+and what to surface for human review
+— is a security engineering judgment
+that no vendor tool can make for
+a specific environment. It requires
+understanding the specific threats,
+the specific operational context,
+and the specific consequences of
+false positive and false negative
+responses. Building ADSAE required
+making these judgments explicitly
+rather than accepting the defaults
+of a commercial tool.
 
 ---
 
 ## What I Would Do Differently at Scale
 
-At enterprise scale I would implement
-the Sentinel SOC with dedicated tiers —
-Level 1 analysts for triage and initial
-response, Level 2 for investigation,
-and Level 3 for threat hunting and
-rule development. The playbooks would
-be significantly more extensive,
-covering automated containment actions
-including isolating endpoints through
-Defender for Endpoint, disabling
-accounts through Graph API, and
-creating firewall rules to block
-malicious IPs.
+At enterprise scale ADSAE's
+architecture would change significantly.
+The core detection logic — monitoring
+specific event IDs and applying
+thresholds — would remain valid but
+the execution model would change from
+a scheduled PowerShell script to an
+Azure Function receiving events in
+near-real-time through Event Hub.
 
-UEBA — User and Entity Behaviour
-Analytics — would be enabled in Sentinel
-to provide baseline behavioural
-profiles for each user and alert on
-deviations that individual analytics
-rules miss. UEBA detects the subtle
-anomalies that pattern-matching rules
-cannot — a user who normally generates
-50 events per day suddenly generating
-5000, or an account that never
-authenticates outside business hours
-suddenly authenticating at 3am.
+Response actions would be executed
+through the Microsoft Graph API and
+Azure REST APIs rather than local
+AD PowerShell — enabling response
+to both cloud and on-premises identity
+events from a single response platform.
 
-The threat hunting programme would
-be formalised with a hunting hypothesis
-backlog, scheduled hunting sessions,
-and a process for converting successful
-hunts into analytics rules — closing
-the loop between proactive and reactive
-detection.
+The whitelist management would be
+moved from a configuration file in
+the script to a Key Vault backed
+configuration — enabling whitelist
+updates without modifying the script
+and providing access-controlled,
+audit-logged whitelist management.
+
+The dashboard would be replaced by
+a Sentinel workbook — integrating
+ADSAE operational data with the
+broader Sentinel SOC view rather
+than maintaining a separate
+operational interface.
+
+---
+
+## Series Navigation
+
+| # | Project | Link |
+|---|---------|------|
+| ← P8 | Compliance & Governance | [View](../azure-compliance-governance) |
+| *P9* | *ADSAE Security Tool* | You are here |
+| → P10 | Landing Zone | [View](../azure-landing-zone) |
+| 🏛️ | Enterprise Capstone | [View](../enterprise-hybrid-security-architecture) |
 
 ---
 
 Uzma Shabbir
-Cloud Security Engineer | AZ-104 | AZ-500
+Azure Security Engineer | AZ-104 | AZ-500
 [GitHub](https://github.com/UzmaSami) •
 [LinkedIn](https://linkedin.com/in/uzma-shabbir-034361128)
