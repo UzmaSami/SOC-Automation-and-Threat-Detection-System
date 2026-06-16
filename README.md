@@ -1,5 +1,4 @@
-# SOC Automation and Threat detection System
-## ADSAE Custom PAM Tool
+# ADSAE Custom PAM Tool
 
 ## Overview
 
